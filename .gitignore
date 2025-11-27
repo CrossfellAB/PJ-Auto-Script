@@ -45,10 +45,7 @@ htmlcov/
 .nox/
 
 # Data directories (contain runtime data)
-data/cache/
-data/sessions/
-data/output/
-data/costs/
+data/
 
 # OS
 .DS_Store
