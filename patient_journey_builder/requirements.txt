@@ -1,0 +1,49 @@
+# Patient Journey Builder - Dependencies
+# Install: pip install -r requirements.txt
+
+# Core HTTP client
+httpx>=0.25.0
+
+# HTML parsing
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# PDF extraction
+PyPDF2>=3.0.0
+
+# Claude API client
+anthropic>=0.40.0
+
+# Token counting
+tiktoken>=0.5.0
+
+# Configuration management
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# CLI framework
+click>=8.1.0
+
+# Structured logging
+structlog>=23.2.0
+
+# Rich console output
+rich>=13.0.0
+
+# Retry logic
+tenacity>=8.2.0
+
+# File locking for session management
+filelock>=3.13.0
+
+# Date/time utilities
+python-dateutil>=2.8.0
+
+# Development dependencies (optional)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# pytest-cov>=4.1.0
+# mypy>=1.5.0
+# black>=23.0.0
+# ruff>=0.1.0
