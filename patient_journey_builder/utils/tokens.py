@@ -2,12 +2,19 @@
 Token management utilities for context window optimization.
 """
 
-import tiktoken
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Try to import tiktoken, fall back to estimation if unavailable
+try:
+    import tiktoken
+    TIKTOKEN_AVAILABLE = True
+except Exception:
+    TIKTOKEN_AVAILABLE = False
+    logger.warning("tiktoken unavailable, using character-based token estimation")
 
 
 @dataclass
@@ -36,9 +43,12 @@ class TokenManager:
     """
     Manages token counting and context window optimization.
 
-    Uses tiktoken for accurate token counting and provides
-    utilities for content prioritization and truncation.
+    Uses tiktoken for accurate token counting when available,
+    falls back to character-based estimation otherwise.
     """
+
+    # Average characters per token (empirically ~4 for English text)
+    CHARS_PER_TOKEN = 4
 
     def __init__(self, model: str = "claude-sonnet-4-20250514"):
         """
@@ -47,8 +57,17 @@ class TokenManager:
         Args:
             model: Claude model name (used for cost estimation)
         """
-        # Use cl100k_base encoding (closest to Claude's tokenizer)
-        self.encoding = tiktoken.get_encoding("cl100k_base")
+        self.encoding = None
+        self.use_tiktoken = False
+
+        if TIKTOKEN_AVAILABLE:
+            try:
+                # Use cl100k_base encoding (closest to Claude's tokenizer)
+                self.encoding = tiktoken.get_encoding("cl100k_base")
+                self.use_tiktoken = True
+            except Exception as e:
+                logger.warning(f"Failed to load tiktoken encoding: {e}")
+
         self.model = model
         self.budget = TokenBudget()
 
@@ -64,7 +83,12 @@ class TokenManager:
         """
         if not text:
             return 0
-        return len(self.encoding.encode(text))
+
+        if self.use_tiktoken and self.encoding:
+            return len(self.encoding.encode(text))
+        else:
+            # Fallback: estimate ~4 characters per token
+            return len(text) // self.CHARS_PER_TOKEN
 
     def truncate_to_tokens(self, text: str, max_tokens: int) -> str:
         """
@@ -77,12 +101,18 @@ class TokenManager:
         Returns:
             Truncated text
         """
-        tokens = self.encoding.encode(text)
-        if len(tokens) <= max_tokens:
-            return text
-
-        truncated_tokens = tokens[:max_tokens]
-        return self.encoding.decode(truncated_tokens) + "\n[...truncated]"
+        if self.use_tiktoken and self.encoding:
+            tokens = self.encoding.encode(text)
+            if len(tokens) <= max_tokens:
+                return text
+            truncated_tokens = tokens[:max_tokens]
+            return self.encoding.decode(truncated_tokens) + "\n[...truncated]"
+        else:
+            # Fallback: truncate by characters
+            max_chars = max_tokens * self.CHARS_PER_TOKEN
+            if len(text) <= max_chars:
+                return text
+            return text[:max_chars] + "\n[...truncated]"
 
     def prioritize_content(
         self,
