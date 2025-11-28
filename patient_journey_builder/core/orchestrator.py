@@ -1,5 +1,9 @@
 """
 Main orchestrator for patient journey database creation.
+
+Supports two modes:
+1. Standard mode: Brave Search API + web fetch + Claude synthesis
+2. Intelligent mode: Claude with web search for integrated research
 """
 
 import time
@@ -17,7 +21,7 @@ from ..models import (
     QualitySummary,
 )
 from ..search import SearchCache, BraveSearchClient, WebFetcher
-from ..synthesis import ClaudeSynthesizer
+from ..synthesis import ClaudeSynthesizer, IntelligentResearchClient
 from ..domains import get_domain, get_all_domains
 from ..utils import (
     CostTracker,
@@ -45,7 +49,8 @@ class PatientJourneyOrchestrator:
         self,
         config: Settings,
         cost_tracker: Optional[CostTracker] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        intelligent_mode: bool = False
     ):
         """
         Initialize the orchestrator.
@@ -54,10 +59,12 @@ class PatientJourneyOrchestrator:
             config: Application settings
             cost_tracker: Optional cost tracker
             use_cache: Whether to use caching
+            intelligent_mode: Use Claude intelligent search instead of Brave API
         """
         self.config = config
+        self.intelligent_mode = intelligent_mode
 
-        # Initialize cache
+        # Initialize cache (used in standard mode)
         self.cache = SearchCache(
             cache_dir=config.cache_dir,
             enabled=use_cache
@@ -71,18 +78,31 @@ class PatientJourneyOrchestrator:
             base_delay=0.5
         )
 
-        # Initialize clients
-        self.search_client = BraveSearchClient(
-            api_key=config.brave_api_key,
-            cache=self.cache,
-            rate_limiter=self.search_rate_limiter
-        )
-
-        self.web_fetcher = WebFetcher(
-            cache=self.cache,
-            rate_limiter=self.fetch_rate_limiter,
-            enable_pdf=config.enable_pdf_extraction
-        )
+        # Initialize clients based on mode
+        if intelligent_mode:
+            # Intelligent mode: Claude does search + synthesis
+            self.intelligent_client = IntelligentResearchClient(
+                api_key=config.anthropic_api_key,
+                model=config.claude_model,
+                max_output_tokens=config.max_output_tokens,
+                cost_tracker=cost_tracker,
+                max_search_iterations=15
+            )
+            self.search_client = None
+            self.web_fetcher = None
+        else:
+            # Standard mode: Brave Search + fetch + Claude synthesis
+            self.intelligent_client = None
+            self.search_client = BraveSearchClient(
+                api_key=config.brave_api_key,
+                cache=self.cache,
+                rate_limiter=self.search_rate_limiter
+            )
+            self.web_fetcher = WebFetcher(
+                cache=self.cache,
+                rate_limiter=self.fetch_rate_limiter,
+                enable_pdf=config.enable_pdf_extraction
+            )
 
         # Cost tracker
         self.cost_tracker = cost_tracker
@@ -159,13 +179,20 @@ class PatientJourneyOrchestrator:
             )
 
             try:
-                # Execute domain research
-                domain_data = self._execute_domain(
-                    domain=domain,
-                    disease=disease,
-                    country=country,
-                    major_city=major_city
-                )
+                # Execute domain research (mode depends on initialization)
+                if self.intelligent_mode:
+                    domain_data = self._execute_domain_intelligent(
+                        domain=domain,
+                        disease=disease,
+                        country=country
+                    )
+                else:
+                    domain_data = self._execute_domain(
+                        domain=domain,
+                        disease=disease,
+                        country=country,
+                        major_city=major_city
+                    )
 
                 # Validate completeness
                 is_complete, gaps = domain.validate_completeness(domain_data)
@@ -370,6 +397,103 @@ class PatientJourneyOrchestrator:
 
         return domain_data
 
+    def _execute_domain_intelligent(
+        self,
+        domain,
+        disease: str,
+        country: str
+    ) -> DomainData:
+        """
+        Execute intelligent research for a single domain using Claude web search.
+
+        This method uses Claude's built-in web search capability for more
+        intelligent, iterative research that produces higher quality output.
+
+        Args:
+            domain: Domain instance
+            disease: Disease name
+            country: Target country
+
+        Returns:
+            DomainData with research results
+        """
+        domain_data = domain.create_domain_data()
+        domain_data.status = DomainStatus.IN_PROGRESS
+
+        # Get synthesis prompt with table schemas
+        synthesis_prompt = domain.get_synthesis_prompt(disease, country)
+
+        # Get search query hints (these guide Claude's initial searches)
+        search_hints = domain.generate_search_queries(disease, country, "")
+
+        self.progress.synthesis_start(len(search_hints))
+
+        # Execute intelligent research
+        parse_result, metrics = self.intelligent_client.research_domain(
+            domain_prompt=synthesis_prompt,
+            disease=disease,
+            country=country,
+            domain_name=domain.domain_name,
+            required_tables=domain.required_tables,
+            search_queries_hint=search_hints
+        )
+
+        # Build domain data from results
+        domain_data.raw_synthesis_output = parse_result.raw_output
+
+        # Store raw response for enhanced markdown export
+        domain_data.raw_response = {
+            'search_log': parse_result.search_log if hasattr(parse_result, 'search_log') else [],
+            'named_entities': parse_result.named_entities if hasattr(parse_result, 'named_entities') else None,
+            'data_gaps': parse_result.data_gaps if hasattr(parse_result, 'data_gaps') else [],
+            'sources_for_validation': parse_result.sources if hasattr(parse_result, 'sources') else []
+        }
+
+        # Also check quality_summary for these fields
+        if parse_result.quality_summary:
+            qs = parse_result.quality_summary
+            if 'search_log' in qs:
+                domain_data.raw_response['search_log'] = qs['search_log']
+            if 'named_entities' in qs:
+                domain_data.raw_response['named_entities'] = qs['named_entities']
+            if 'data_gaps' in qs:
+                domain_data.raw_response['data_gaps'] = qs['data_gaps']
+            if 'sources_for_validation' in qs:
+                domain_data.raw_response['sources_for_validation'] = qs['sources_for_validation']
+
+        # Convert parsed tables to DataTable objects
+        for table_name, table_data in parse_result.tables.items():
+            domain_data.tables.append(DataTable(
+                table_name=table_name,
+                headers=table_data.get('headers', []),
+                rows=table_data.get('rows', []),
+                sources=table_data.get('sources', []),
+                confidence_level=table_data.get('confidence_level', 'MEDIUM'),
+                data_gaps=table_data.get('data_gaps', [])
+            ))
+
+        # Quality summary
+        domain_data.quality_summary = QualitySummary(
+            searches_completed=metrics.get('search_count', 0),
+            tables_populated=len(domain_data.tables),
+            confidence_level=parse_result.quality_summary.get('confidence_level', 'MEDIUM') if parse_result.quality_summary else 'MEDIUM',
+            primary_source_quality=parse_result.quality_summary.get('primary_source_quality', 'MEDIUM') if parse_result.quality_summary else 'MEDIUM',
+            data_recency=parse_result.quality_summary.get('data_recency', 'Unknown') if parse_result.quality_summary else 'Unknown',
+            parse_method=f"intelligent_search ({metrics.get('search_count', 0)} searches)"
+        )
+
+        # Token usage
+        domain_data.input_tokens = metrics.get('input_tokens', 0)
+        domain_data.output_tokens = metrics.get('output_tokens', 0)
+        domain_data.estimated_cost_usd = metrics.get('estimated_cost', 0.0)
+
+        self.progress.synthesis_complete(
+            len(domain_data.tables),
+            parse_result.success
+        )
+
+        return domain_data
+
     def _get_country_code(self, country: str) -> str:
         """
         Get two-letter country code.
@@ -445,5 +569,7 @@ class PatientJourneyOrchestrator:
 
     def close(self) -> None:
         """Clean up resources."""
-        self.search_client.close()
-        self.web_fetcher.close()
+        if self.search_client:
+            self.search_client.close()
+        if self.web_fetcher:
+            self.web_fetcher.close()

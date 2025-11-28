@@ -17,9 +17,18 @@ class Settings(BaseSettings):
     All settings can be overridden via environment variables or .env file.
     """
 
-    # API Keys (required)
+    # API Keys
     anthropic_api_key: str = Field(..., description="Anthropic API key")
-    brave_api_key: str = Field(..., description="Brave Search API key")
+    brave_api_key: Optional[str] = Field(
+        default=None,
+        description="Brave Search API key (required for standard mode, optional for intelligent mode)"
+    )
+
+    # Research mode
+    intelligent_mode: bool = Field(
+        default=True,
+        description="Use Claude intelligent search instead of Brave API (recommended for quality)"
+    )
 
     # Model settings
     claude_model: str = Field(
@@ -138,12 +147,22 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
-    @field_validator("anthropic_api_key", "brave_api_key", mode="before")
+    @field_validator("anthropic_api_key", mode="before")
     @classmethod
-    def validate_api_keys(cls, v: str) -> str:
-        """Validate API keys are not empty or placeholder values."""
+    def validate_anthropic_key(cls, v: str) -> str:
+        """Validate Anthropic API key is not empty or placeholder values."""
         if not v or v.startswith("your-") or v == "xxx" or v == "sk-ant-your-key-here":
-            raise ValueError("API key must be set to a valid value")
+            raise ValueError("Anthropic API key must be set to a valid value")
+        return v
+
+    @field_validator("brave_api_key", mode="before")
+    @classmethod
+    def validate_brave_key(cls, v: Optional[str]) -> Optional[str]:
+        """Validate Brave API key if provided."""
+        if v is None or v == "":
+            return None
+        if v.startswith("your-") or v == "xxx":
+            raise ValueError("Brave API key must be set to a valid value or left empty for intelligent mode")
         return v
 
 
