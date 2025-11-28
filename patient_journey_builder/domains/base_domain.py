@@ -198,39 +198,99 @@ class BaseDomain(ABC):
         )
 
 
-# Base synthesis prompt template used by all domains
+# Enhanced base synthesis prompt template used by all domains
 BASE_SYNTHESIS_PROMPT = """
-You are a pharmaceutical market research analyst conducting research on {disease} in {country}.
+You are an expert pharmaceutical market research analyst conducting comprehensive research on {disease} in {country}.
 
-## TASK
-Analyze the provided search results and populate the following data tables.
+## YOUR TASK
+Analyze ALL provided search results thoroughly and produce a detailed, actionable intelligence database. This database will be used for strategic pharmaceutical decision-making.
+
+## CRITICAL REQUIREMENTS
+
+### 1. SEARCH LOG (MANDATORY)
+You MUST document each search result analyzed with:
+- Query number (sequential)
+- Exact search query used
+- Source found (author, publication, year)
+- Key data points extracted
+
+### 2. NAMED ENTITIES (MANDATORY)
+You MUST identify and name specific:
+- **Key Opinion Leaders (KOLs)**: Actual names of researchers, clinicians, guideline authors
+- **Institutions**: University hospitals, research centers, specialist clinics
+- **Payer Bodies**: HTA agencies, reimbursement authorities, regional payers
+- **Professional Societies**: Dermatology, allergy, immunology associations
+- **Patient Organizations**: Advocacy groups, support organizations
+
+### 3. COUNTRY-SPECIFIC DATA (MANDATORY)
+Prioritize {country}-specific data over international proxies:
+- Use local currency for costs
+- Reference national guidelines and registries
+- Name regional healthcare systems and variation
+- Identify country-specific stakeholders
+
+### 4. CONFIDENCE LEVELS (MANDATORY)
+For EVERY data point, indicate confidence:
+- **HIGH**: {country}-specific registry/study data, national guidelines
+- **MEDIUM**: European/international data applicable to {country}
+- **LOW**: Estimates, extrapolations, expert opinion
+
+### 5. DATA GAPS (MANDATORY)
+Explicitly list what data could NOT be found. This is critical for identifying research needs.
 
 ## OUTPUT FORMAT
-Return your analysis as a JSON object with the following structure:
+Return your analysis as a JSON object with this EXACT structure:
 
 ```json
 {{
   "search_log": [
-    {{"query": "...", "source_found": "...", "key_data_points": "..."}}
+    {{
+      "query_number": 1,
+      "query": "exact search query",
+      "source_found": "Author et al. Year - Publication/Source",
+      "key_data_points": "Brief summary of key findings extracted"
+    }}
   ],
   "tables": {{
     "table_name": {{
       "headers": ["Column1", "Column2", ...],
       "rows": [
-        {{"Column1": "value1", "Column2": "value2", ...}},
-        ...
-      ],
-      "sources": ["source1", "source2"],
-      "confidence_level": "HIGH|MEDIUM|LOW"
+        {{"Column1": "value", "Column2": "value", "Confidence": "HIGH/MEDIUM/LOW", "Source": "citation"}}
+      ]
     }}
   }},
-  "data_gaps": ["Gap 1", "Gap 2"],
+  "named_entities": {{
+    "kols": [
+      {{"name": "Full Name", "institution": "University/Hospital", "role": "Position", "expertise": "Area"}}
+    ],
+    "institutions": [
+      {{"name": "Institution Name", "location": "City", "type": "University Hospital/Clinic", "specialization": "Area"}}
+    ],
+    "payer_bodies": [
+      {{"name": "Organization", "role": "Function", "decisions": "Key decisions made"}}
+    ],
+    "professional_societies": [
+      {{"name": "Society Name", "abbreviation": "ABBR", "focus": "Area"}}
+    ],
+    "patient_organizations": [
+      {{"name": "Organization", "focus": "Disease/Area", "activities": "Key activities"}}
+    ]
+  }},
+  "data_gaps": [
+    "Specific gap 1: Description of what data is missing",
+    "Specific gap 2: Description of what data is missing"
+  ],
+  "sources_for_validation": [
+    "1. Full citation with author, title, journal, year",
+    "2. Full citation..."
+  ],
   "quality_summary": {{
-    "searches_completed": 12,
-    "tables_populated": 10,
-    "confidence_level": "HIGH|MEDIUM|LOW",
-    "primary_source_quality": "HIGH|MEDIUM|LOW",
-    "data_recency": "2020-2024"
+    "searches_completed": "X/Y",
+    "tables_populated": "X/Y",
+    "key_stats_cross_validated": true,
+    "confidence_level": "HIGH/MEDIUM/LOW",
+    "primary_source_quality": "HIGH/MEDIUM/LOW",
+    "data_recency": "YYYY-YYYY"
   }}
 }}
 ```
@@ -238,11 +298,12 @@ Return your analysis as a JSON object with the following structure:
 ## TABLES TO POPULATE
 {table_schemas}
 
-## IMPORTANT GUIDELINES
-- Use "NOT_FOUND" for data that cannot be located
-- Cross-validate key statistics across multiple sources when possible
-- Note confidence level (HIGH/MEDIUM/LOW) based on source quality
-- Document data gaps explicitly
-- Prioritize recent data (last 5 years)
-- Cite sources for each data point where possible
+## DATA EXTRACTION GUIDELINES
+- Use "NOT_FOUND" for data that cannot be located - DO NOT make up data
+- Cross-validate key statistics (prevalence, costs) across 2+ sources when possible
+- Distinguish between {country}-specific data vs international/European proxies
+- Prioritize recent data (2020-2024) but include historical trends where relevant
+- For cost data: always note the year and currency
+- For prevalence: include confidence intervals when available
+- For named entities: only include publicly verifiable names and positions
 """
